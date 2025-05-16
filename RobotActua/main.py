@@ -6,7 +6,7 @@ from naoqi import ALProxy
 
 # Dirección IP del robot NAO
 ROBOT_IP = "localhost"  # ip 
-ROBOT_PORT = 56588
+ROBOT_PORT = 54403
 
 # Dirección del servidor socket
 HOST = '127.0.0.1'
@@ -38,48 +38,56 @@ def mover_cabeza_nao(motion_proxy, angles):
     else:
         print(u"No se puede mover la cabeza por valores nulos.")
 
-def mover_codos_nao(motion_proxy, angles):
+def mover_codos_nao(motion_proxy, angles, speed=0.2, verbose=True):
+    """Versión compatible con Python 2.7"""
     def clamp(value, min_val, max_val):
         return max(min(value, max_val), min_val)
 
-    # Obtener ángulos de los codos
-    left_elbow = get_joint_value(angles, ["Angles", "Elbows", "Left", "Roll"])
-    right_elbow = get_joint_value(angles, ["Angles", "Elbows", "Right", "Roll"])
+    # Rangos reales del NAO (en radianes)
+    NAO_RANGES = {
+        "Left": (-1.54, -0.03),  # LElbowRoll
+        "Right": (0.03, 1.54)     # RElbowRoll
+    }
 
-    if left_elbow is not None and right_elbow is not None:
-        # Convertir a radianes si vienen en grados
-        if abs(left_elbow) > np.pi * 2:
-            left_elbow = np.radians(left_elbow)
-        if abs(right_elbow) > np.pi * 2:
-            right_elbow = np.radians(right_elbow)
+    # Compatibilidad con ambas estructuras (antigua y nueva)
+    try:
+        left_roll = angles.get("Angles", {}).get("Elbows", {}).get("Left", {}).get("Roll", {})
+        right_roll = angles.get("Angles", {}).get("Elbows", {}).get("Right", {}).get("Roll", {})
+        
+        left_angle = left_roll.get("Radian")
+        right_angle = right_roll.get("Radian")
+    except AttributeError:
+        left_angle = right_angle = None
 
-        # Rango real del NAO
-        LEFT_MIN, LEFT_MAX = -1.54, -0.03
-        RIGHT_MIN, RIGHT_MAX = 0.03, 1.54
+    if left_angle is None or right_angle is None:
+        if verbose:
+            print("Advertencia: Angulos de codos no validos")
+        return False
 
-        # Normalizar los ángulos al rango 0 - π
-        left_norm = np.clip(left_elbow, 0, np.pi) / np.pi
-        right_norm = np.clip(right_elbow, 0, np.pi) / np.pi
+    try:
+        # Mapeo invertido para el codo izquierdo
+        left_min, left_max = NAO_RANGES["Left"]
+        right_min, right_max = NAO_RANGES["Right"]
+        
+        left_value = clamp(-left_angle, left_min, left_max)
+        right_value = clamp(right_angle, right_min, right_max)
 
-        # Mapear al rango del NAO
-        left_value = LEFT_MIN + left_norm * (LEFT_MAX - LEFT_MIN)
-        right_value = RIGHT_MIN + right_norm * (RIGHT_MAX - RIGHT_MIN)
-
-        # Protección adicional
-        left_value = clamp(left_value, LEFT_MIN, LEFT_MAX)
-        right_value = clamp(right_value, RIGHT_MIN, RIGHT_MAX)
-
+        # Configurar movimiento
         names = ["LElbowRoll", "RElbowRoll"]
-        values = [left_value, right_value]
-        speed = 0.2
-        motion_proxy.setAngles(names, values, speed)
+        speed = clamp(speed, 0.1, 1.0)
+        motion_proxy.setAngles(names, [left_value, right_value], speed)
 
-        print(u" Moviendo codos: Izq={:.2f}° ({:.3f} rad), Der={:.2f}° ({:.3f} rad)".format(
-            np.degrees(left_elbow), left_value, np.degrees(right_elbow), right_value))
+        if verbose:
+            print(u"Movimiento codos NAO - L: {:.1f}° ({:.3f} rad), R: {:.1f}° ({:.3f} rad)".format(
+                np.degrees(left_angle), left_value,
+                np.degrees(right_angle), right_value))
+        
+        return True
 
-    else:
-        print(u"No se puede mover los codos por valores nulos.")
-
+    except Exception as e:
+        print("Error al mover codos: {}".format(str(e)))
+        return False
+    
 def main():
     try:
         motion = ALProxy("ALMotion", ROBOT_IP, ROBOT_PORT)
@@ -93,7 +101,7 @@ def main():
     try:
         s.bind((HOST, PORT))
         s.listen(1)
-        print(" Esperando conexión del sistema de visión...")
+        print(" Esperando conexión del sistema de vision...")
         conn, addr = s.accept()
         print(" Conectado por {}".format(addr))
 
